@@ -1,0 +1,115 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv
+
+# FastAPI / Uvicorn
+*.log
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Python IDE
+.spyderproject
+.spyproject
+.ropeproject
+
+# Node / NPM
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+pnpm-debug.log*
+
+# Build outputs
+frontend/dist/
+frontend/build/
+frontend/.svelte-kit/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+temp_crop.png
+backend/temp_crop.png
+
+# AI Models (large files)
+backend/models/*.pt
+backend/models/*.pth
+backend/models/*.onnx
+backend/models/*.h5
+!backend/models/.gitkeep
+
+# User data and translations
+backend/translations.json
+translations/
+user_data/
+
+# Test manga images (if you have test data)
+test_images/
+manga/
+sample_manga/
+
+# Logs
+logs/
+*.log
+
+# OS specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
