@@ -1,5 +1,5 @@
 <script>
-  import Canvas from './lib/Canvas.svelte';
+  import Canvas from './components/Canvas.svelte';
   import PageControls from './components/PageControls.svelte';
   import ImageCarousel from './components/ImageCarousel.svelte';
   import AnalysisControls from './components/AnalysisControls.svelte';
