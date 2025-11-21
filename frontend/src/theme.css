@@ -1,0 +1,158 @@
+/*
+ * Theme CSS Variables
+ * Dark theme by default, light theme via media query
+ */
+
+:root {
+  /* Background Colors */
+  --color-bg-primary: #1a1a1a;
+  --color-bg-secondary: #242424;
+  --color-bg-tertiary: #2d2d2d;
+  --color-bg-surface: #2d2d2d;
+  --color-bg-canvas: #1e1e1e;
+
+  /* Text Colors */
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #e5e7eb;
+  --color-text-tertiary: #9ca3af;
+  --color-text-hint: #6b7280;
+  --color-text-heading: #f9fafb;
+
+  /* Border Colors */
+  --color-border-primary: #3f3f3f;
+  --color-border-secondary: #4b5563;
+  --color-border-light: #374151;
+
+  /* Accent Colors (work well in both themes) */
+  --color-accent-blue: #3b82f6;
+  --color-accent-blue-hover: #60a5fa;
+  --color-accent-blue-light: #dbeafe;
+  --color-accent-blue-dark: #1e40af;
+
+  --color-accent-green: #10b981;
+  --color-accent-green-hover: #34d399;
+  --color-accent-green-light: #d1fae5;
+  --color-accent-green-dark: #059669;
+
+  --color-accent-red: #ef4444;
+  --color-accent-red-hover: #f87171;
+  --color-accent-red-light: #fee2e2;
+  --color-accent-red-dark: #991b1b;
+
+  --color-accent-amber: #f59e0b;
+  --color-accent-amber-hover: #fbbf24;
+
+  /* Button Colors */
+  --color-button-primary: #3b82f6;
+  --color-button-primary-hover: #2563eb;
+  --color-button-secondary: #4b5563;
+  --color-button-secondary-hover: #374151;
+  --color-button-disabled: #4b5563;
+  --color-button-text-disabled: #6b7280;
+
+  /* Input Colors */
+  --color-input-bg: #2d2d2d;
+  --color-input-border: #4b5563;
+  --color-input-border-focus: #3b82f6;
+  --color-input-text: #ffffff;
+  --color-input-placeholder: #6b7280;
+
+  /* State Colors */
+  --color-hover: #3f3f3f;
+  --color-active: #4b5563;
+  --color-focus-ring: rgba(59, 130, 246, 0.3);
+
+  /* Error/Success Colors */
+  --color-error-bg: #7f1d1d;
+  --color-error-border: #991b1b;
+  --color-error-text: #fca5a5;
+  --color-success-bg: #065f46;
+  --color-success-text: #6ee7b7;
+
+  /* Canvas/Image Viewer Colors */
+  --color-canvas-bg: #1e1e1e;
+  --color-canvas-empty: #374151;
+
+  /* Legend/Label Colors */
+  --color-legend-bg: #242424;
+  --color-legend-text: #9ca3af;
+
+  /* Box Colors (for speech bubble detection) */
+  --color-box-detected: #ef4444;
+  --color-box-custom: #3b82f6;
+  --color-box-selected: #f59e0b;
+
+  /* Opacity values */
+  --opacity-box-default: 0.1;
+  --opacity-box-selected: 0.3;
+  --opacity-disabled: 0.5;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+}
+
+/* Light theme (optional - triggered by system preference) */
+@media (prefers-color-scheme: light) {
+  :root {
+    /* Background Colors */
+    --color-bg-primary: #ffffff;
+    --color-bg-secondary: #f9fafb;
+    --color-bg-tertiary: #f3f4f6;
+    --color-bg-surface: #ffffff;
+    --color-bg-canvas: #f3f4f6;
+
+    /* Text Colors */
+    --color-text-primary: #1f2937;
+    --color-text-secondary: #374151;
+    --color-text-tertiary: #6b7280;
+    --color-text-hint: #9ca3af;
+    --color-text-heading: #111827;
+
+    /* Border Colors */
+    --color-border-primary: #e5e7eb;
+    --color-border-secondary: #d1d5db;
+    --color-border-light: #f3f4f6;
+
+    /* Button Colors */
+    --color-button-primary: #3b82f6;
+    --color-button-primary-hover: #2563eb;
+    --color-button-secondary: #f3f4f6;
+    --color-button-secondary-hover: #e5e7eb;
+    --color-button-disabled: #e5e7eb;
+    --color-button-text-disabled: #9ca3af;
+
+    /* Input Colors */
+    --color-input-bg: #ffffff;
+    --color-input-border: #d1d5db;
+    --color-input-border-focus: #3b82f6;
+    --color-input-text: #1f2937;
+    --color-input-placeholder: #9ca3af;
+
+    /* State Colors */
+    --color-hover: #f3f4f6;
+    --color-active: #e5e7eb;
+    --color-focus-ring: rgba(59, 130, 246, 0.2);
+
+    /* Error/Success Colors */
+    --color-error-bg: #fee2e2;
+    --color-error-border: #ef4444;
+    --color-error-text: #991b1b;
+    --color-success-bg: #d1fae5;
+    --color-success-text: #065f46;
+
+    /* Canvas/Image Viewer Colors */
+    --color-canvas-bg: #f3f4f6;
+    --color-canvas-empty: #9ca3af;
+
+    /* Legend/Label Colors */
+    --color-legend-bg: #ffffff;
+    --color-legend-text: #6b7280;
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  }
+}
