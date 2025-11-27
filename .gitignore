@@ -68,7 +68,8 @@ Thumbs.db
 
 # Temporary files
 *.tmp
-temp_crop.png
+backend/crops/**
+!backend/crops/.gitkeep
 backend/temp_crop.png
 backend/thumbnails/**
 !backend/thumbnails/.gitkeep

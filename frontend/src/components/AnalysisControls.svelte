@@ -4,6 +4,9 @@
     folderPath,
     selectedBox,
     selectedBoxIndex,
+    selectedBoxIndices,
+    selectedBoxes,
+    allBoxes,
     detectedBoxes,
     isLoading,
     error,
@@ -23,7 +26,7 @@
     hasBoxAnalysisCache,
     hasBoxTranslationCache
   } from '../lib/store.js';
-  import { detectBubbles, analyzeBubble, streamTranslation, getImageUrl } from '../lib/api.js';
+  import { detectBubbles, analyzeBubble, analyzeMultipleBubbles, streamTranslation, streamTranslationMultiple, getImageUrl } from '../lib/api.js';
   import { formatError } from '../lib/utils.js';
 
   let isDetecting = false;
@@ -32,8 +35,9 @@
 
   // Subscribe to stores
   $: hasImage = $currentImage !== null;
-  $: hasSelection = $selectedBox !== null;
-  $: hasAnalysisResult = $analysisResult.ocr_text && $analysisResult.ocr_text.length > 0;
+  $: hasSelection = $selectedBoxIndices.length > 0;
+  $: selectionCount = $selectedBoxIndices.length;
+  $: hasAnalysisResult = $analysisResult.ocr_tokens && $analysisResult.ocr_tokens.length > 0;
   $: canDetect = hasImage && !isDetecting && !$isLoading;
   $: canAnalyze = hasImage && hasSelection && !isAnalyzing && !$isLoading;
   $: canTranslate = hasImage && hasSelection && hasAnalysisResult && !isTranslating && !$isLoading;
@@ -42,6 +46,10 @@
   $: hasCachedDetection = hasDetectedBoxesCache();
   $: hasCachedAnalysis = hasBoxAnalysisCache($selectedBoxIndex);
   $: hasCachedTranslation = hasBoxTranslationCache($selectedBoxIndex);
+
+  // Button text based on selection
+  $: analyzeButtonText = selectionCount === 1 ? 'Analyze Bubble' : `Analyze ${selectionCount} Bubbles`;
+  $: translateButtonText = selectionCount === 1 ? 'Translate' : `Translate ${selectionCount} Bubbles`;
 
   async function handleDetect() {
     if (!canDetect || !$currentImage) return;
@@ -74,7 +82,7 @@
   }
 
   async function handleAnalyze() {
-    if (!canAnalyze || !$currentImage || !$selectedBox) return;
+    if (!canAnalyze || !$currentImage || $selectedBoxIndices.length === 0) return;
 
     // Clear cached analysis if we're re-analyzing
     if (hasCachedAnalysis && $selectedBoxIndex != null) {
@@ -88,10 +96,19 @@
       // Get the image path for the current image
       const imagePath = getImageUrl($folderPath, $currentImage);
 
-      const result = await analyzeBubble(imagePath, $selectedBox);
+      let result;
+
+      if ($selectedBoxIndices.length === 1) {
+        // Single bubble analysis
+        result = await analyzeBubble(imagePath, $selectedBoxes[0]);
+        console.log('[AnalysisControls] Single analysis result:', result);
+      } else {
+        // Multi-bubble analysis
+        result = await analyzeMultipleBubbles(imagePath, $selectedBoxes);
+        console.log('[AnalysisControls] Multi analysis result:', result);
+      }
 
       // Debug: Log the response to see what we're getting
-      console.log('[AnalysisControls] Analysis result:', result);
       console.log('[AnalysisControls] OCR Tokens:', result.ocr_tokens);
       console.log('[AnalysisControls] Hiragana Tokens:', result.hiragana_tokens);
       console.log('[AnalysisControls] Romaji Tokens:', result.romaji_tokens);
@@ -99,9 +116,7 @@
       setAnalysisResult(result);
 
       // Save analysis to cache
-      if ($selectedBoxIndex != null) {
-        updateCacheAnalysis($selectedBoxIndex, result);
-      }
+      updateCacheAnalysis($selectedBoxIndices, result);
     } catch (err) {
       error.set(formatError(err));
     } finally {
@@ -110,7 +125,7 @@
   }
 
   async function handleTranslate() {
-    if (!canTranslate || !$currentImage || !$selectedBox || !$analysisResult.ocr_text) return;
+    if (!canTranslate || !$currentImage || $selectedBoxIndices.length === 0) return;
 
     // Clear cached translation if we're re-translating
     if (hasCachedTranslation && $selectedBoxIndex != null) {
@@ -125,31 +140,43 @@
       // Get the image path for the current image
       const imagePath = getImageUrl($folderPath, $currentImage);
 
-      // Stream the translation
-      await streamTranslation(
-        imagePath,
-        $selectedBox,
-        $analysisResult.ocr_text,
-        (chunk) => {
-          // Callback for each chunk
-          appendStreamChunk(chunk);
-        },
-        (err) => {
-          // Error callback
-          setStreamingError(formatError(err));
-        }
-      );
+      if ($selectedBoxIndices.length === 1) {
+        // Single bubble translation
+        await streamTranslation(
+          imagePath,
+          $selectedBoxes[0],
+          $analysisResult.bubbleBreakdown?.[0]?.ocr_text || $analysisResult.ocr_text,
+          (chunk) => {
+            appendStreamChunk(chunk);
+          },
+          (err) => {
+            setStreamingError(formatError(err));
+          }
+        );
+      } else {
+        // Multi-bubble translation
+        const ocrTexts = $analysisResult.bubbleBreakdown.map(b => b.ocr_text);
+        await streamTranslationMultiple(
+          imagePath,
+          $selectedBoxes,
+          ocrTexts,
+          (chunk) => {
+            appendStreamChunk(chunk);
+          },
+          (err) => {
+            setStreamingError(formatError(err));
+          }
+        );
+      }
 
       // Streaming completed successfully
       endStreaming();
 
       // Save translation to cache
-      if ($selectedBoxIndex != null) {
-        updateCacheTranslation($selectedBoxIndex, {
-          thinking: $streamingTranslation.thinking,
-          content: $streamingTranslation.content
-        });
-      }
+      updateCacheTranslation($selectedBoxIndices, {
+        thinking: $streamingTranslation.thinking,
+        content: $streamingTranslation.content
+      });
     } catch (err) {
       setStreamingError(formatError(err));
     } finally {
@@ -158,15 +185,15 @@
   }
 </script>
 
-<div class="analysis-controls">
-  <h2 class="text-sm font-semibold text-center">Analysis</h2>
+<div class="p-2 border-b border-border-primary">
+  <h2 class="text-sm font-semibold text-center text-text-primary mb-2">Analysis</h2>
 
-  <div class="button-group">
+  <div class="flex gap-2 flex-wrap">
     <!-- Detection Button -->
     <button
       on:click={handleDetect}
       disabled={!canDetect}
-      class="action-button detect-button"
+      class="flex-1 min-w-[110px] px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-200 cursor-pointer border-none shadow-sm text-white flex items-center justify-center bg-[var(--color-accent-blue)] hover:bg-[var(--color-accent-blue-dark)] disabled:bg-[var(--color-bg-tertiary)] disabled:text-[var(--color-text-tertiary)] disabled:cursor-not-allowed disabled:opacity-60"
       title={!hasImage ? 'Load an image first' : hasCachedDetection ? 'Re-detect (clears cached boxes)' : 'Detect speech bubbles'}
     >
     {#if isDetecting}
@@ -194,7 +221,7 @@
     <button
       on:click={handleAnalyze}
       disabled={!canAnalyze}
-      class="action-button analyze-button"
+      class="flex-1 min-w-[110px] px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-200 cursor-pointer border-none shadow-sm text-white flex items-center justify-center bg-[var(--color-accent-green)] hover:bg-[var(--color-accent-green-dark)] disabled:bg-[var(--color-bg-tertiary)] disabled:text-[var(--color-text-tertiary)] disabled:cursor-not-allowed disabled:opacity-60"
       title={!hasImage ? 'Load an image first' : !hasSelection ? 'Select a speech bubble first' : hasCachedAnalysis ? 'Re-analyze (clears cached analysis)' : 'Analyze speech bubble'}
     >
     {#if isAnalyzing}
@@ -213,7 +240,7 @@
             <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
           </svg>
         {/if}
-        Analyze Selected Bubble
+        {analyzeButtonText}
       </span>
     {/if}
   </button>
@@ -222,7 +249,7 @@
     <button
       on:click={handleTranslate}
       disabled={!canTranslate}
-      class="action-button translate-button"
+      class="flex-1 min-w-[110px] px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-200 cursor-pointer border-none shadow-sm text-white flex items-center justify-center bg-purple-600 hover:bg-purple-700 disabled:bg-[var(--color-bg-tertiary)] disabled:text-[var(--color-text-tertiary)] disabled:cursor-not-allowed disabled:opacity-60"
       title={!hasImage ? 'Load an image first' : !hasSelection ? 'Select a speech bubble first' : !hasAnalysisResult ? 'Analyze the bubble first' : hasCachedTranslation ? 'Re-translate (clears cached translation)' : 'Translate'}
     >
     {#if isTranslating}
@@ -241,7 +268,7 @@
             <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
           </svg>
         {/if}
-        Translate
+        {translateButtonText}
       </span>
     {/if}
     </button>
@@ -249,95 +276,23 @@
 
   <!-- Helper Text -->
   {#if !hasImage}
-    <p class="helper-text">
+    <p class="mt-2 text-xs text-text-tertiary text-center">
       Load a manga folder to begin
     </p>
   {:else if !hasSelection && !isDetecting}
-    <p class="helper-text">
+    <p class="mt-2 text-xs text-text-tertiary text-center">
       Click "Detect" or draw a custom box
     </p>
   {/if}
 </div>
 
 <style>
-  .analysis-controls {
-    padding: 0.5rem;
-    border-bottom: 1px solid var(--color-border-primary);
-  }
-
-  .analysis-controls h2 {
-    margin-bottom: 0.5rem;
-    color: var(--color-text-primary);
-  }
-
-  .button-group {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  .action-button {
-    flex: 1;
-    min-width: 110px;
-    padding: 0.375rem 0.75rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    border-radius: 0.5rem;
-    transition: all 0.2s;
-    cursor: pointer;
-    border: none;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-    color: white;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .action-button:disabled {
-    background: var(--color-bg-tertiary);
-    color: var(--color-text-tertiary);
-    cursor: not-allowed;
-    opacity: 0.6;
-  }
-
-  .detect-button {
-    background: #3b82f6;
-  }
-
-  .detect-button:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  .analyze-button {
-    background: #10b981;
-  }
-
-  .analyze-button:hover:not(:disabled) {
-    background: #059669;
-  }
-
-  .translate-button {
-    background: #8b5cf6;
-  }
-
-  .translate-button:hover:not(:disabled) {
-    background: #7c3aed;
-  }
-
-  .helper-text {
-    margin-top: 0.5rem;
-    font-size: 0.75rem;
-    color: var(--color-text-tertiary);
-    text-align: center;
-  }
-
   /* Responsive: stack buttons on very small screens */
   @media (max-width: 480px) {
-    .button-group {
+    .flex-wrap {
       flex-direction: column;
     }
-
-    .action-button {
+    .min-w-\[110px\] {
       min-width: auto;
     }
   }

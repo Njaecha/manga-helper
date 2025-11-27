@@ -1,6 +1,9 @@
 /* Import theme variables */
 @import './theme.css';
 
+/* Import markdown styles */
+@import './styles/markdown.css';
+
 /* Tailwind CSS directives */
 @tailwind base;
 @tailwind components;

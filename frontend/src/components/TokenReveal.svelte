@@ -1,6 +1,24 @@
 <script>
-  import { onDestroy } from 'svelte';
-  import { revealedTokens, revealToken, hideToken, revealAllOfType, hideAllOfType, revealAllTokens, hideAllTokens, folderPath, currentImage, clearWordInfoCache, tokenGridScale } from '../lib/store.js';
+  import { onDestroy, onMount } from 'svelte';
+  import {
+    revealedTokens,
+    revealToken,
+    hideToken,
+    revealAllOfType,
+    hideAllOfType,
+    revealAllTokens,
+    hideAllTokens,
+    folderPath,
+    currentImage,
+    clearWordInfoCache,
+    tokenGridScale,
+    selectedTokenIndices,
+    selectToken,
+    deselectToken,
+    toggleTokenSelection,
+    clearTokenSelection,
+    selectTokenRange
+  } from '../lib/store.js';
   import { wordInfo } from '../lib/api.js';
   import Tooltip from './Tooltip.svelte';
 
@@ -17,12 +35,57 @@
   let hoverPreview = null; // { index, word, position }
   let hoverTimeout = null;
 
+  // Token selection state
+  $: selectedTokens = $selectedTokenIndices;
+  let selectionStartIndex = null;
+  let isSelecting = false;
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let hasDragged = false;
+  const DRAG_THRESHOLD = 5; // Minimum pixels to consider it a drag
+  let copyButtonCopied = false;
+
   // Subscribe to store
   $: revealed = $revealedTokens;
 
   // Check if we have tokens
   $: hasTokens = ocrTokens.length > 0;
   $: tokenCount = ocrTokens.length;
+
+  // Color palette for different bubbles (cycling) - using dark colors
+  const bubbleColors = [
+    { bg: '#1e3a8a', border: '#3b82f6', name: 'blue' },    // blue-900 / blue-500
+    { bg: '#14532d', border: '#10b981', name: 'green' },   // green-900 / green-500
+    { bg: '#78350f', border: '#f59e0b', name: 'yellow' },  // yellow-900 / yellow-600
+    { bg: '#581c87', border: '#a855f7', name: 'purple' },  // purple-900 / purple-500
+    { bg: '#831843', border: '#ec4899', name: 'pink' }     // pink-900 / pink-500
+  ];
+
+  // Get color for a bubble index
+  function getBubbleColor(bubbleIndex) {
+    if (bubbleIndex == null) return bubbleColors[0];
+    return bubbleColors[bubbleIndex % bubbleColors.length];
+  }
+
+  // Check if token is a separator
+  function isSeparator(token) {
+    return token && typeof token === 'object' && token.type === 'separator';
+  }
+
+  // Get text from token (handle both string and object formats)
+  function getTokenText(token) {
+    if (typeof token === 'string') return token;
+    if (token && typeof token === 'object' && token.text) return token.text;
+    return '';
+  }
+
+  // Get bubble index from token
+  function getBubbleIndex(token) {
+    if (token && typeof token === 'object' && token.bubbleIndex != null) {
+      return token.bubbleIndex;
+    }
+    return 0; // Default to first bubble for string tokens (backward compatibility)
+  }
 
   // Auto-reveal all OCR tokens when tokens change (OCR always visible)
   $: if (ocrTokens.length > 0) {
@@ -133,13 +196,45 @@
 
   // Recalculate card widths when tokens OR scale changes
   $: if (ocrTokens.length > 0) {
-    cardWidths = ocrTokens.map((ocrToken, index) =>
-      calculateCardWidth(ocrToken, hiraganaTokens[index], romajiTokens[index], $tokenGridScale)
-    );
+    cardWidths = ocrTokens.map((ocrToken, index) => {
+      // Skip width calculation for separators
+      if (isSeparator(ocrToken)) return 0;
+
+      return calculateCardWidth(
+        getTokenText(ocrToken),
+        getTokenText(hiraganaTokens[index]),
+        getTokenText(romajiTokens[index]),
+        $tokenGridScale
+      );
+    });
   }
 
   // Handle OCR token click - fetch word info
   async function handleOcrClick(event, index, word) {
+    // Check if this is a selection action (Ctrl/Cmd for toggle, Shift for range)
+    if (event.ctrlKey || event.metaKey) {
+      // Toggle selection
+      event.preventDefault();
+      event.stopPropagation();
+      toggleTokenSelection(index);
+      selectionStartIndex = index;
+      return;
+    }
+
+    if (event.shiftKey && selectionStartIndex !== null) {
+      // Range selection
+      event.preventDefault();
+      event.stopPropagation();
+      selectTokenRange(selectionStartIndex, index);
+      return;
+    }
+
+    // If clicking without modifiers and there's a selection, clear it
+    if (selectedTokens.size > 0 && !selectedTokens.has(index)) {
+      clearTokenSelection();
+      selectionStartIndex = null;
+    }
+
     // Stop propagation to prevent click-outside handler from firing immediately
     event.stopPropagation();
 
@@ -297,6 +392,97 @@
     hoverPreview = null;
   }
 
+  // Handle token mouse down for drag selection
+  function handleTokenMouseDown(event, index) {
+    if (event.ctrlKey || event.metaKey || event.shiftKey) {
+      return; // Let click handler manage modified clicks
+    }
+
+    // Track starting position for drag detection
+    dragStartX = event.clientX;
+    dragStartY = event.clientY;
+    hasDragged = false;
+
+    isSelecting = true;
+    selectionStartIndex = index;
+  }
+
+  // Handle token mouse enter for drag selection
+  function handleTokenMouseEnter(event, index) {
+    if (isSelecting && selectionStartIndex !== null) {
+      // Check if we've actually dragged (moved mouse enough)
+      const deltaX = Math.abs(event.clientX - dragStartX);
+      const deltaY = Math.abs(event.clientY - dragStartY);
+      const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+
+      if (distance >= DRAG_THRESHOLD) {
+        if (!hasDragged) {
+          // First time crossing threshold, start selection
+          hasDragged = true;
+          clearTokenSelection();
+          selectToken(selectionStartIndex);
+        }
+        // Continue selection
+        selectTokenRange(selectionStartIndex, index);
+      }
+    }
+  }
+
+  // Handle token mouse up
+  function handleTokenMouseUp() {
+    isSelecting = false;
+  }
+
+  // Copy selected tokens to clipboard
+  async function copySelectedToClipboard() {
+    if (selectedTokens.size === 0) return;
+
+    // Get selected tokens in order
+    const indices = Array.from(selectedTokens).sort((a, b) => a - b);
+    const selectedText = indices
+      .map(idx => getTokenText(ocrTokens[idx]))
+      .join('');
+
+    try {
+      await navigator.clipboard.writeText(selectedText);
+      console.log('[TokenReveal] Copied to clipboard:', selectedText);
+
+      // Show success feedback
+      copyButtonCopied = true;
+      setTimeout(() => {
+        copyButtonCopied = false;
+      }, 2000);
+    } catch (error) {
+      console.error('[TokenReveal] Failed to copy:', error);
+      // Fallback to old method
+      const textArea = document.createElement('textarea');
+      textArea.value = selectedText;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+
+      // Show success feedback even for fallback
+      copyButtonCopied = true;
+      setTimeout(() => {
+        copyButtonCopied = false;
+      }, 2000);
+    }
+  }
+
+  // Add global mouseup listener
+  onMount(() => {
+    const handleGlobalMouseUp = () => {
+      isSelecting = false;
+    };
+
+    document.addEventListener('mouseup', handleGlobalMouseUp);
+
+    return () => {
+      document.removeEventListener('mouseup', handleGlobalMouseUp);
+    };
+  });
+
   // Clean up on component destroy
   onDestroy(() => {
     if (hoverTimeout) {
@@ -309,6 +495,40 @@
   <div class="header">
     <h3 class="title">Token Analysis</h3>
     <div class="controls">
+      <!-- Selection toolbar (shown when tokens selected) -->
+      {#if selectedTokens.size > 0}
+        <div class="selection-toolbar">
+          <span class="selection-count">{selectedTokens.size} selected</span>
+          <button
+            on:click={copySelectedToClipboard}
+            class="btn btn-copy"
+            class:copied={copyButtonCopied}
+            title={copyButtonCopied ? 'Copied!' : 'Copy selected tokens to clipboard'}
+          >
+            {#if copyButtonCopied}
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+              </svg>
+              Copied!
+            {:else}
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+              Copy
+            {/if}
+          </button>
+          <button
+            on:click={() => clearTokenSelection()}
+            class="btn btn-clear"
+            title="Clear selection"
+          >
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      {/if}
+
       {#if hasTokens}
         <!-- Type-specific reveal buttons -->
         <button
@@ -385,46 +605,58 @@
       <!-- Token cards -->
       <div class="token-grid" style="font-size: {$tokenGridScale}em;">
         {#each ocrTokens as ocrToken, index}
-          {#key revealed[index]}
-            <div class="token-card" style="width: {cardWidths[index]}px;">
-              <!-- OCR Box (always visible, clickable for word info) -->
-              <button
-                class="token-box ocr revealed"
-                title="Click for word info, hover for large preview"
-                on:click={(e) => handleOcrClick(e, index, ocrToken)}
-                on:mouseenter={(e) => handleOcrHover(e, index, ocrToken)}
-                on:mouseleave={handleOcrLeave}
-              >
-                {ocrToken}
-              </button>
+          {#if !isSeparator(ocrToken)}
+            <!-- Token card -->
+            {@const bubbleIndex = getBubbleIndex(ocrToken)}
+            {@const bubbleColor = getBubbleColor(bubbleIndex)}
+            {@const ocrText = getTokenText(ocrToken)}
+            {@const hiraganaText = getTokenText(hiraganaTokens[index])}
+            {@const romajiText = getTokenText(romajiTokens[index])}
 
-              <!-- Hiragana Box -->
-              <button
-                class="token-box hiragana"
-                on:click={() => handleTokenClick(index, 'hiragana')}
-                title="{isRevealed(index, 'hiragana') ? hiraganaTokens[index] : 'Click to reveal Hiragana'}"
-              >
-                {#if isRevealed(index, 'hiragana')}
-                  {hiraganaTokens[index]}
-                {:else}
-                  <span class="spoiler">???</span>
-                {/if}
-              </button>
+            {#key revealed[index]}
+              <div class="token-card" style="width: {cardWidths[index]}px; background-color: {bubbleColor.bg}; border: 2px solid {bubbleColor.border}20; border-radius: 6px; padding: 2px;">
+                <!-- OCR Box (always visible, clickable for word info) -->
+                <button
+                  class="token-box ocr revealed"
+                  class:selected={selectedTokens.has(index)}
+                  title="{selectedTokens.has(index) ? 'Selected - ' : ''}Click for word info, Ctrl+Click to select, Shift+Click for range, drag to select multiple"
+                  on:click={(e) => handleOcrClick(e, index, ocrText)}
+                  on:mousedown={(e) => handleTokenMouseDown(e, index)}
+                  on:mouseenter={(e) => { handleTokenMouseEnter(e, index); handleOcrHover(e, index, ocrText); }}
+                  on:mouseleave={handleOcrLeave}
+                  on:mouseup={handleTokenMouseUp}
+                >
+                  {ocrText}
+                </button>
 
-              <!-- Romaji Box -->
-              <button
-                class="token-box romaji"
-                on:click={() => handleTokenClick(index, 'romaji')}
-                title="{isRevealed(index, 'romaji') ? romajiTokens[index] : 'Click to reveal Romaji'}"
-              >
-                {#if isRevealed(index, 'romaji')}
-                  {romajiTokens[index]}
-                {:else}
-                  <span class="spoiler">???</span>
-                {/if}
-              </button>
-            </div>
-          {/key}
+                <!-- Hiragana Box -->
+                <button
+                  class="token-box hiragana"
+                  on:click={() => handleTokenClick(index, 'hiragana')}
+                  title="{isRevealed(index, 'hiragana') ? hiraganaText : 'Click to reveal Hiragana'}"
+                >
+                  {#if isRevealed(index, 'hiragana')}
+                    {hiraganaText}
+                  {:else}
+                    <span class="spoiler">???</span>
+                  {/if}
+                </button>
+
+                <!-- Romaji Box -->
+                <button
+                  class="token-box romaji"
+                  on:click={() => handleTokenClick(index, 'romaji')}
+                  title="{isRevealed(index, 'romaji') ? romajiText : 'Click to reveal Romaji'}"
+                >
+                  {#if isRevealed(index, 'romaji')}
+                    {romajiText}
+                  {:else}
+                    <span class="spoiler">???</span>
+                  {/if}
+                </button>
+              </div>
+            {/key}
+          {/if}
         {/each}
       </div>
     {:else}
@@ -634,26 +866,17 @@
 
   .token-box {
     width: 100%;
-    padding: 0.25em 0.5em;
+    padding: 0.25em 0.25em;
     font-size: 0.875em;
     font-weight: 500;
     text-align: center;
-    border: 2px solid;
+    border: 1px solid;
     border-radius: 4px;
+    color: white;
     cursor: pointer;
     transition: all 0.2s;
     background: var(--color-bg-surface);
     white-space: nowrap;
-  }
-
-  .token-box.hidden {
-    background: var(--color-bg-tertiary);
-    color: var(--color-text-tertiary);
-    border-style: dashed;
-  }
-
-  .token-box.hidden:hover {
-    background: var(--color-hover);
   }
 
   .token-box.ocr {
@@ -667,30 +890,90 @@
   }
 
   .token-box.ocr:hover {
-    background: #e5e7eb;
-    border-color: #1f2937;
+    border-color: lightskyblue;
     transform: translateY(-1px);
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  }
+
+  /* Selected token styling */
+  .token-box.selected {
+    background-color: rgba(255, 255, 255, 0.236) !important;
+    border-color: #3b82f6 !important;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5) !important;
+  }
+
+  /* Selection toolbar */
+  .selection-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    background: var(--color-accent-blue);
+    border-radius: 4px;
+    color: white;
+  }
+
+  .selection-count {
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .btn-copy {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    border: none;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-copy:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+
+  .btn-copy.copied {
+    background: rgba(34, 197, 94, 0.9);
+    transform: scale(1.05);
+  }
+
+  .btn-copy.copied:hover {
+    background: rgba(34, 197, 94, 1);
+  }
+
+  .btn-clear {
+    display: flex;
+    align-items: center;
+    padding: 0.25rem 0.375rem;
+    background: rgba(239, 68, 68, 0.8);
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .btn-clear:hover {
+    background: rgba(220, 38, 38, 0.9);
+  }
+
+  .btn-copy .icon,
+  .btn-clear .icon {
+    width: 0.875rem;
+    height: 0.875rem;
   }
 
   .token-box.hiragana {
     border-color: #8b5cf6;
   }
 
-  .token-box.hiragana.revealed {
-    background: #faf5ff;
-    color: #7c3aed;
-    border-color: #7c3aed;
-  }
 
   .token-box.romaji {
     border-color: #3b82f6;
-  }
-
-  .token-box.romaji.revealed {
-    background: #eff6ff;
-    color: #2563eb;
-    border-color: #2563eb;
   }
 
   .spoiler {

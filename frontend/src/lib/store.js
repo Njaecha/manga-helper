@@ -38,16 +38,28 @@ export const allBoxes = derived(
   }
 );
 
-// Selection state
-export const selectedBox = writable(null);
-export const selectedBoxIndex = writable(null);
+// Selection state - now supports multi-selection
+export const selectedBoxIndices = writable([]); // Array of indices in selection order
 
-// Analysis results for selected bubble
+// Derived stores for backward compatibility and convenience
+export const selectedBoxes = derived(
+  [allBoxes, selectedBoxIndices],
+  ([$allBoxes, $selectedBoxIndices]) => {
+    return $selectedBoxIndices.map(idx => $allBoxes[idx]).filter(Boolean);
+  }
+);
+
+// For backward compatibility - returns first selected box
+export const selectedBox = derived(selectedBoxes, $selectedBoxes => $selectedBoxes[0] || null);
+export const selectedBoxIndex = derived(selectedBoxIndices, $selectedBoxIndices => $selectedBoxIndices[0] ?? null);
+
+// Analysis results for selected bubble(s)
 export const analysisResult = writable({
   ocr_text: '',
   ocr_tokens: [],
   hiragana_tokens: [],
-  romaji_tokens: []
+  romaji_tokens: [],
+  bubbleBreakdown: [] // For multi-bubble analysis: array of per-bubble data
 });
 
 // Streaming translation state
@@ -61,6 +73,10 @@ export const streamingTranslation = writable({
 // Revealed tokens tracking (for spoiler functionality)
 // Structure: { 0: { ocr: true, hiragana: false, romaji: false }, 1: {...}, ... }
 export const revealedTokens = writable({});
+
+// Selected tokens for multi-selection (copy to clipboard, chat context, etc.)
+// Structure: Set of token indices
+export const selectedTokenIndices = writable(new Set());
 
 // Revealed sections tracking
 export const revealedSections = writable({
@@ -169,30 +185,59 @@ export function removeBox(boxIndex, boxType) {
     detectedBoxes.update(boxes => boxes.filter((_, i) => i !== boxIndex));
   }
   // Clear selection if deleted box was selected
-  selectedBox.set(null);
-  selectedBoxIndex.set(null);
+  selectedBoxIndices.update(indices => indices.filter(idx => idx !== boxIndex));
 }
 
-export function selectBox(box, index) {
-  selectedBox.set(box);
-  selectedBoxIndex.set(index);
+export function selectBox(box, index, isMultiSelect = false) {
+  if (isMultiSelect) {
+    // Add to or remove from selection
+    selectedBoxIndices.update(indices => {
+      if (indices.includes(index)) {
+        // Deselect if already selected
+        return indices.filter(idx => idx !== index);
+      } else {
+        // Add to selection in order
+        return [...indices, index];
+      }
+    });
+  } else {
+    // Single selection - toggle if clicking the same box, otherwise replace
+    selectedBoxIndices.update(indices => {
+      if (indices.length === 1 && indices[0] === index) {
+        // Deselect if clicking the same box again
+        return [];
+      } else {
+        // Replace selection with clicked box
+        return [index];
+      }
+    });
+  }
 
-  // Try to restore cached analysis for this box
-  restoreBoxAnalysisFromCache(index);
+  // Try to restore cached analysis for the selection
+  const indices = get(selectedBoxIndices);
+  if (indices.length === 1) {
+    restoreBoxAnalysisFromCache(indices[0]);
+  } else if (indices.length > 1) {
+    restoreMultiBoxAnalysisFromCache(indices);
+  } else {
+    // No selection, clear analysis
+    restoreBoxAnalysisFromCache(null);
+  }
 }
 
 /**
- * Restore analysis and translation for a specific box from cache
- * @param {number} boxIndex - Index of the box to restore
+ * Restore analysis for multiple boxes from cache
+ * @param {number[]} boxIndices - Array of box indices to restore
  */
-function restoreBoxAnalysisFromCache(boxIndex) {
-  if (boxIndex == null) {
-    // Clear analysis if no box selected
+function restoreMultiBoxAnalysisFromCache(boxIndices) {
+  if (!boxIndices || boxIndices.length === 0) {
+    // Clear analysis if no boxes selected
     analysisResult.set({
       ocr_text: '',
       ocr_tokens: [],
       hiragana_tokens: [],
-      romaji_tokens: []
+      romaji_tokens: [],
+      bubbleBreakdown: []
     });
     clearStreamingTranslation();
     return;
@@ -215,7 +260,83 @@ function restoreBoxAnalysisFromCache(boxIndex) {
       ocr_text: '',
       ocr_tokens: [],
       hiragana_tokens: [],
-      romaji_tokens: []
+      romaji_tokens: [],
+      bubbleBreakdown: []
+    });
+    clearStreamingTranslation();
+    return;
+  }
+
+  // Build multi-box cache key (sorted for consistency)
+  const multiKey = 'multi_' + [...boxIndices].sort((a, b) => a - b).join(',');
+
+  // Try to restore multi-box analysis
+  if (entry.analyses && entry.analyses[multiKey]) {
+    console.log('[Store] Restoring cached multi-box analysis for indices', boxIndices);
+    analysisResult.set(entry.analyses[multiKey]);
+  } else {
+    // No cached multi-analysis, clear it
+    analysisResult.set({
+      ocr_text: '',
+      ocr_tokens: [],
+      hiragana_tokens: [],
+      romaji_tokens: [],
+      bubbleBreakdown: []
+    });
+  }
+
+  // Try to restore streaming translation for multi-selection
+  if (entry.streamingTranslations && entry.streamingTranslations[multiKey]) {
+    console.log('[Store] Restoring cached multi-box translation for indices', boxIndices);
+    const translation = entry.streamingTranslations[multiKey];
+    streamingTranslation.set({
+      thinking: translation.thinking || '',
+      content: translation.content || '',
+      isStreaming: false,
+      error: null
+    });
+  } else {
+    clearStreamingTranslation();
+  }
+}
+
+/**
+ * Restore analysis and translation for a specific box from cache
+ * @param {number} boxIndex - Index of the box to restore
+ */
+function restoreBoxAnalysisFromCache(boxIndex) {
+  if (boxIndex == null) {
+    // Clear analysis if no box selected
+    analysisResult.set({
+      ocr_text: '',
+      ocr_tokens: [],
+      hiragana_tokens: [],
+      romaji_tokens: [],
+      bubbleBreakdown: []
+    });
+    clearStreamingTranslation();
+    return;
+  }
+
+  const $folderPath = get(folderPath);
+  const $currentImage = get(currentImage);
+
+  if (!$folderPath || !$currentImage) {
+    return;
+  }
+
+  const cacheKey = buildImageCacheKey($folderPath, $currentImage);
+  const $pageCache = get(pageCache);
+  const entry = getPageCacheEntry($pageCache, cacheKey);
+
+  if (!entry) {
+    // No cache for this page, clear analysis
+    analysisResult.set({
+      ocr_text: '',
+      ocr_tokens: [],
+      hiragana_tokens: [],
+      romaji_tokens: [],
+      bubbleBreakdown: []
     });
     clearStreamingTranslation();
     return;
@@ -231,7 +352,8 @@ function restoreBoxAnalysisFromCache(boxIndex) {
       ocr_text: '',
       ocr_tokens: [],
       hiragana_tokens: [],
-      romaji_tokens: []
+      romaji_tokens: [],
+      bubbleBreakdown: []
     });
   }
 
@@ -252,8 +374,7 @@ function restoreBoxAnalysisFromCache(boxIndex) {
 }
 
 export function clearSelection() {
-  selectedBox.set(null);
-  selectedBoxIndex.set(null);
+  selectedBoxIndices.set([]);
 }
 
 export function setAnalysisResult(result) {
@@ -303,13 +424,13 @@ export function updateCanvasOffset(deltaX, deltaY) {
 export function resetAnalysisState() {
   detectedBoxes.set([]);
   customBoxes.set([]);
-  selectedBox.set(null);
-  selectedBoxIndex.set(null);
+  selectedBoxIndices.set([]);
   analysisResult.set({
     ocr_text: '',
     ocr_tokens: [],
     hiragana_tokens: [],
-    romaji_tokens: []
+    romaji_tokens: [],
+    bubbleBreakdown: []
   });
   revealedTokens.set({});
   revealedSections.set({
@@ -490,10 +611,11 @@ export function saveCurrentPageToCache() {
   const $pageCache = get(pageCache);
 
   // Get current state
+  const $selectedBoxIndices = get(selectedBoxIndices);
   const entry = {
     detectedBoxes: get(detectedBoxes),
     customBoxes: get(customBoxes),
-    selectedBoxIndex: get(selectedBoxIndex),
+    selectedBoxIndices: $selectedBoxIndices,
     revealedTokens: get(revealedTokens),
     analyses: {},
     streamingTranslations: {}
@@ -507,19 +629,49 @@ export function saveCurrentPageToCache() {
   }
 
   // Add current analysis if we have one
-  const $selectedBoxIndex = get(selectedBoxIndex);
   const $analysisResult = get(analysisResult);
-  if ($selectedBoxIndex != null && $analysisResult && $analysisResult.ocr_tokens?.length > 0) {
-    entry.analyses[$selectedBoxIndex] = $analysisResult;
+  if ($analysisResult && $analysisResult.ocr_tokens?.length > 0) {
+    if ($selectedBoxIndices.length === 1) {
+      // Single box analysis
+      entry.analyses[$selectedBoxIndices[0]] = $analysisResult;
+    } else if ($selectedBoxIndices.length > 1) {
+      // Multi-box analysis - also cache individual boxes
+      const multiKey = 'multi_' + [...$selectedBoxIndices].sort((a, b) => a - b).join(',');
+      entry.analyses[multiKey] = $analysisResult;
+
+      // Cache individual box analyses from bubbleBreakdown
+      if ($analysisResult.bubbleBreakdown) {
+        $analysisResult.bubbleBreakdown.forEach((bubbleData, idx) => {
+          const boxIndex = $selectedBoxIndices[idx];
+          entry.analyses[boxIndex] = {
+            ocr_text: bubbleData.ocr_text,
+            ocr_tokens: bubbleData.ocr_tokens,
+            hiragana_tokens: bubbleData.hiragana_tokens,
+            romaji_tokens: bubbleData.romaji_tokens,
+            bubbleBreakdown: []
+          };
+        });
+      }
+    }
   }
 
   // Add current streaming translation if we have one
   const $streamingTranslation = get(streamingTranslation);
-  if ($selectedBoxIndex != null && $streamingTranslation && ($streamingTranslation.thinking || $streamingTranslation.content)) {
-    entry.streamingTranslations[$selectedBoxIndex] = {
-      thinking: $streamingTranslation.thinking,
-      content: $streamingTranslation.content
-    };
+  if ($streamingTranslation && ($streamingTranslation.thinking || $streamingTranslation.content)) {
+    if ($selectedBoxIndices.length === 1) {
+      // Single box translation
+      entry.streamingTranslations[$selectedBoxIndices[0]] = {
+        thinking: $streamingTranslation.thinking,
+        content: $streamingTranslation.content
+      };
+    } else if ($selectedBoxIndices.length > 1) {
+      // Multi-box translation
+      const multiKey = 'multi_' + [...$selectedBoxIndices].sort((a, b) => a - b).join(',');
+      entry.streamingTranslations[multiKey] = {
+        thinking: $streamingTranslation.thinking,
+        content: $streamingTranslation.content
+      };
+    }
   }
 
   setPageCacheEntry($pageCache, cacheKey, entry);
@@ -555,42 +707,86 @@ export function restorePageFromCache() {
   // Restore state
   detectedBoxes.set(entry.detectedBoxes || []);
   customBoxes.set(entry.customBoxes || []);
-  selectedBoxIndex.set(entry.selectedBoxIndex);
+
+  // Restore selection (support both old and new format)
+  if (entry.selectedBoxIndices) {
+    selectedBoxIndices.set(entry.selectedBoxIndices);
+  } else if (entry.selectedBoxIndex != null) {
+    // Backward compatibility - old cache format
+    selectedBoxIndices.set([entry.selectedBoxIndex]);
+  } else {
+    selectedBoxIndices.set([]);
+  }
+
   revealedTokens.set(entry.revealedTokens || {});
 
-  // Restore analysis if we have a selected box
-  if (entry.selectedBoxIndex != null && entry.analyses && entry.analyses[entry.selectedBoxIndex]) {
-    analysisResult.set(entry.analyses[entry.selectedBoxIndex]);
+  // Restore analysis based on selection
+  const indices = entry.selectedBoxIndices || (entry.selectedBoxIndex != null ? [entry.selectedBoxIndex] : []);
+  if (indices.length === 1) {
+    // Single box analysis
+    if (entry.analyses && entry.analyses[indices[0]]) {
+      analysisResult.set(entry.analyses[indices[0]]);
+    } else {
+      analysisResult.set({
+        ocr_text: '',
+        ocr_tokens: [],
+        hiragana_tokens: [],
+        romaji_tokens: [],
+        bubbleBreakdown: []
+      });
+    }
+  } else if (indices.length > 1) {
+    // Multi-box analysis
+    const multiKey = 'multi_' + [...indices].sort((a, b) => a - b).join(',');
+    if (entry.analyses && entry.analyses[multiKey]) {
+      analysisResult.set(entry.analyses[multiKey]);
+    } else {
+      analysisResult.set({
+        ocr_text: '',
+        ocr_tokens: [],
+        hiragana_tokens: [],
+        romaji_tokens: [],
+        bubbleBreakdown: []
+      });
+    }
   } else {
     analysisResult.set({
       ocr_text: '',
       ocr_tokens: [],
       hiragana_tokens: [],
-      romaji_tokens: []
+      romaji_tokens: [],
+      bubbleBreakdown: []
     });
   }
 
   // Restore streaming translation if available
-  if (entry.selectedBoxIndex != null && entry.streamingTranslations && entry.streamingTranslations[entry.selectedBoxIndex]) {
-    const translation = entry.streamingTranslations[entry.selectedBoxIndex];
-    streamingTranslation.set({
-      thinking: translation.thinking || '',
-      content: translation.content || '',
-      isStreaming: false,
-      error: null
-    });
-  } else {
-    clearStreamingTranslation();
-  }
-
-  // Restore selected box from allBoxes
-  if (entry.selectedBoxIndex != null) {
-    const $allBoxes = get(allBoxes);
-    if ($allBoxes[entry.selectedBoxIndex]) {
-      selectedBox.set($allBoxes[entry.selectedBoxIndex]);
+  if (indices.length === 1) {
+    if (entry.streamingTranslations && entry.streamingTranslations[indices[0]]) {
+      const translation = entry.streamingTranslations[indices[0]];
+      streamingTranslation.set({
+        thinking: translation.thinking || '',
+        content: translation.content || '',
+        isStreaming: false,
+        error: null
+      });
+    } else {
+      clearStreamingTranslation();
+    }
+  } else if (indices.length > 1) {
+    const multiKey = 'multi_' + [...indices].sort((a, b) => a - b).join(',');
+    if (entry.streamingTranslations && entry.streamingTranslations[multiKey]) {
+      const translation = entry.streamingTranslations[multiKey];
+      streamingTranslation.set({
+        thinking: translation.thinking || '',
+        content: translation.content || '',
+        isStreaming: false,
+        error: null
+      });
+    } else {
+      clearStreamingTranslation();
     }
   } else {
-    selectedBox.set(null);
+    clearStreamingTranslation();
   }
 
   return true;
@@ -598,12 +794,14 @@ export function restorePageFromCache() {
 
 /**
  * Update cache with current analysis result
+ * @param {number|number[]} boxIndices - Single box index or array of box indices
+ * @param {object} analysisData - Analysis result data
  */
-export function updateCacheAnalysis(boxIndex, analysisData) {
+export function updateCacheAnalysis(boxIndices, analysisData) {
   const $folderPath = get(folderPath);
   const $currentImage = get(currentImage);
 
-  if (!$folderPath || !$currentImage || boxIndex == null) {
+  if (!$folderPath || !$currentImage || boxIndices == null) {
     return;
   }
 
@@ -615,21 +813,53 @@ export function updateCacheAnalysis(boxIndex, analysisData) {
     entry = createPageCacheEntry();
   }
 
-  entry.analyses[boxIndex] = analysisData;
+  // Handle both single box and multi-box
+  if (Array.isArray(boxIndices)) {
+    if (boxIndices.length === 1) {
+      // Single box
+      entry.analyses[boxIndices[0]] = analysisData;
+      console.log('[Store] Updated cache analysis for box', boxIndices[0]);
+    } else if (boxIndices.length > 1) {
+      // Multi-box - cache both multi-key and individual boxes
+      const multiKey = 'multi_' + [...boxIndices].sort((a, b) => a - b).join(',');
+      entry.analyses[multiKey] = analysisData;
+
+      // Also cache individual box analyses from bubbleBreakdown
+      if (analysisData.bubbleBreakdown) {
+        analysisData.bubbleBreakdown.forEach((bubbleData, idx) => {
+          const boxIndex = boxIndices[idx];
+          entry.analyses[boxIndex] = {
+            ocr_text: bubbleData.ocr_text,
+            ocr_tokens: bubbleData.ocr_tokens,
+            hiragana_tokens: bubbleData.hiragana_tokens,
+            romaji_tokens: bubbleData.romaji_tokens,
+            bubbleBreakdown: []
+          };
+        });
+      }
+
+      console.log('[Store] Updated cache analysis for multi-box', multiKey);
+    }
+  } else {
+    // Backward compatibility - single number
+    entry.analyses[boxIndices] = analysisData;
+    console.log('[Store] Updated cache analysis for box', boxIndices);
+  }
+
   setPageCacheEntry($pageCache, cacheKey, entry);
   pageCache.set($pageCache);
-
-  console.log('[Store] Updated cache analysis for box', boxIndex);
 }
 
 /**
  * Update cache with streaming translation
+ * @param {number|number[]} boxIndices - Single box index or array of box indices
+ * @param {object} translationData - Translation data {thinking, content}
  */
-export function updateCacheTranslation(boxIndex, translationData) {
+export function updateCacheTranslation(boxIndices, translationData) {
   const $folderPath = get(folderPath);
   const $currentImage = get(currentImage);
 
-  if (!$folderPath || !$currentImage || boxIndex == null) {
+  if (!$folderPath || !$currentImage || boxIndices == null) {
     return;
   }
 
@@ -641,11 +871,24 @@ export function updateCacheTranslation(boxIndex, translationData) {
     entry = createPageCacheEntry();
   }
 
-  entry.streamingTranslations[boxIndex] = translationData;
+  // Handle both single box and multi-box
+  if (Array.isArray(boxIndices)) {
+    if (boxIndices.length === 1) {
+      entry.streamingTranslations[boxIndices[0]] = translationData;
+      console.log('[Store] Updated cache translation for box', boxIndices[0]);
+    } else if (boxIndices.length > 1) {
+      const multiKey = 'multi_' + [...boxIndices].sort((a, b) => a - b).join(',');
+      entry.streamingTranslations[multiKey] = translationData;
+      console.log('[Store] Updated cache translation for multi-box', multiKey);
+    }
+  } else {
+    // Backward compatibility - single number
+    entry.streamingTranslations[boxIndices] = translationData;
+    console.log('[Store] Updated cache translation for box', boxIndices);
+  }
+
   setPageCacheEntry($pageCache, cacheKey, entry);
   pageCache.set($pageCache);
-
-  console.log('[Store] Updated cache translation for box', boxIndex);
 }
 
 /**
@@ -828,4 +1071,70 @@ export function hasBoxTranslationCache(boxIndex) {
   const entry = getPageCacheEntry($pageCache, cacheKey);
 
   return !!(entry && entry.streamingTranslations && entry.streamingTranslations[boxIndex]);
+}
+
+// ========== Token Selection Functions ==========
+
+/**
+ * Select a single token by index
+ * @param {number} index - Token index to select
+ */
+export function selectToken(index) {
+  selectedTokenIndices.update(set => {
+    const newSet = new Set(set);
+    newSet.add(index);
+    return newSet;
+  });
+}
+
+/**
+ * Deselect a single token by index
+ * @param {number} index - Token index to deselect
+ */
+export function deselectToken(index) {
+  selectedTokenIndices.update(set => {
+    const newSet = new Set(set);
+    newSet.delete(index);
+    return newSet;
+  });
+}
+
+/**
+ * Toggle token selection (select if unselected, deselect if selected)
+ * @param {number} index - Token index to toggle
+ */
+export function toggleTokenSelection(index) {
+  selectedTokenIndices.update(set => {
+    const newSet = new Set(set);
+    if (newSet.has(index)) {
+      newSet.delete(index);
+    } else {
+      newSet.add(index);
+    }
+    return newSet;
+  });
+}
+
+/**
+ * Clear all token selections
+ */
+export function clearTokenSelection() {
+  selectedTokenIndices.set(new Set());
+}
+
+/**
+ * Select a range of tokens from startIndex to endIndex (inclusive)
+ * @param {number} startIndex - First token index
+ * @param {number} endIndex - Last token index
+ */
+export function selectTokenRange(startIndex, endIndex) {
+  selectedTokenIndices.update(set => {
+    const newSet = new Set(set);
+    const start = Math.min(startIndex, endIndex);
+    const end = Math.max(startIndex, endIndex);
+    for (let i = start; i <= end; i++) {
+      newSet.add(i);
+    }
+    return newSet;
+  });
 }

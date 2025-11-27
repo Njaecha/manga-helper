@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from typing import Optional, List
 from urllib.parse import unquote
-from utils.llm import ocr_image, chop, stream_translation, word_information
+from utils.llm import ocr_image, chop, stream_translation, stream_translation_multiple, word_information
 
 app = FastAPI()
 
@@ -25,7 +25,7 @@ app.add_middleware(
 )
 
 # Storage for translations (in production, use a database)
-TRANSLATIONS_FILE = "translations.json"
+TRANSLATIONS_FILE = None
 CROP_FOLDER = "crops"
 THUMBNAIL_FOLDER = "thumbnails"
 Path(CROP_FOLDER).mkdir(exist_ok=True)
@@ -42,10 +42,19 @@ class AnalyzeRequest(BaseModel):
     image: str
     box: dict
 
+class AnalyzeMultipleRequest(BaseModel):
+    image: str
+    boxes: List[dict]  # Array of boxes in selection order
+
 class TranslateRequest(BaseModel):
     image: str
     box: dict
     ocr_text: str
+
+class TranslateMultipleRequest(BaseModel):
+    image: str
+    boxes: List[dict]
+    ocr_texts: List[str]
 
 class LoadFolderRequest(BaseModel):
     folder_path: str
@@ -56,6 +65,7 @@ class SaveTranslationRequest(BaseModel):
     box_index: int
     marker: Optional[str] = ""
     translation: str
+    original_text: str
 
 class InfoRequest(BaseModel):
     image: str
@@ -107,21 +117,12 @@ def analyze(req: AnalyzeRequest):
         "romaji_tokens": ["kono", "hako", "wa"],
     }
     """
-    global MESSAGES
     # 1. Crop bubble
     page, page_path, crop, crop_path = img_and_crop(req=req)
     ocr_text = ocr_image(crop_path)
     ocr_text = ocr_text.replace("\n", "")
-    # Debug: Print OCR text
-    print(f"[ANALYZE] OCR Text: '{ocr_text}'")
-    print(f"[ANALYZE] OCR Text length: {len(ocr_text)}")
 
     tokens, hiragana, romanji =  chop(text=ocr_text)
-
-    # Debug: Print token arrays
-    print(f"[ANALYZE] Tokens: {tokens}")
-    print(f"[ANALYZE] Hiragana: {hiragana}")
-    print(f"[ANALYZE] Romaji: {romanji}")
 
     response = {
         "ocr_text": ocr_text,
@@ -130,9 +131,95 @@ def analyze(req: AnalyzeRequest):
         "romaji_tokens": romanji
     }
 
-    print(f"[ANALYZE] Sending response: {response}")
+    return response
+
+
+@app.post("/analyze-multiple")
+def analyze_multiple(req: AnalyzeMultipleRequest):
+    """
+    Analyze multiple speech bubbles in order and return combined tokens with bubble metadata.
+
+    Response format:
+    {
+        "ocr_tokens": [
+            {"text": "この", "bubbleIndex": 0},
+            {"text": "箱", "bubbleIndex": 0},
+            {"type": "separator", "bubbleIndex": 0},
+            {"text": "それ", "bubbleIndex": 1},
+            ...
+        ],
+        "hiragana_tokens": [...],
+        "romaji_tokens": [...],
+        "bubbleBreakdown": [
+            {
+                "bubbleIndex": 0,
+                "ocr_text": "この箱",
+                "ocr_tokens": ["この", "箱"],
+                "hiragana_tokens": ["この", "はこ"],
+                "romaji_tokens": ["kono", "hako"]
+            },
+            ...
+        ]
+    }
+    """
+    image_path = image_path_from_url(req.image)
+    page = Image.open(image_path)
+
+    all_ocr_tokens = []
+    all_hiragana_tokens = []
+    all_romaji_tokens = []
+    bubble_breakdown = []
+
+    for bubble_idx, box in enumerate(req.boxes):
+        # Crop bubble
+        x, y, w, h = box["x"], box["y"], box["w"], box["h"]
+        crop = page.crop((x, y, x + w, y + h))
+        crop_path = f"{CROP_FOLDER}/bubble_{bubble_idx}.png"
+        crop.save(crop_path)
+
+        # OCR and tokenize
+        ocr_text = ocr_image(crop_path)
+        ocr_text = ocr_text.replace("\n", "")
+
+        print(f"[ANALYZE-MULTI] Bubble {bubble_idx} OCR Text: '{ocr_text}'")
+
+        tokens, hiragana, romanji = chop(text=ocr_text)
+
+        print(f"[ANALYZE-MULTI] Bubble {bubble_idx} Tokens: {tokens}")
+
+        # Add to combined arrays with bubble index
+        for t, h, r in zip(tokens, hiragana, romanji):
+            all_ocr_tokens.append({"text": t, "bubbleIndex": bubble_idx})
+            all_hiragana_tokens.append({"text": h, "bubbleIndex": bubble_idx})
+            all_romaji_tokens.append({"text": r, "bubbleIndex": bubble_idx})
+
+        # Add separator between bubbles (except after last)
+        if bubble_idx < len(req.boxes) - 1:
+            separator = {"type": "separator", "bubbleIndex": bubble_idx}
+            all_ocr_tokens.append(separator)
+            all_hiragana_tokens.append(separator)
+            all_romaji_tokens.append(separator)
+
+        # Store breakdown
+        bubble_breakdown.append({
+            "bubbleIndex": bubble_idx,
+            "ocr_text": ocr_text,
+            "ocr_tokens": tokens,
+            "hiragana_tokens": hiragana,
+            "romaji_tokens": romanji
+        })
+
+    response = {
+        "ocr_tokens": all_ocr_tokens,
+        "hiragana_tokens": all_hiragana_tokens,
+        "romaji_tokens": all_romaji_tokens,
+        "bubbleBreakdown": bubble_breakdown
+    }
+
+    print(f"[ANALYZE-MULTI] Sending response with {len(req.boxes)} bubbles")
 
     return response
+
 
 @app.post("/translate")
 async def translate(req: TranslateRequest):
@@ -142,6 +229,31 @@ async def translate(req: TranslateRequest):
     """
     page, page_path, crop, crop_path = img_and_crop(req=req)
     return StreamingResponse(stream_translation(page_path, crop_path, req.ocr_text), media_type="text/plain")
+
+
+@app.post("/translate-multiple")
+async def translate_multiple(req: TranslateMultipleRequest):
+    """
+    A streaming API endpoint for translation of multiple speechbubbles.
+    Treats all bubbles as a connected conversation or sentence continuation.
+    """
+    image_path = image_path_from_url(req.image)
+    page = Image.open(image_path)
+
+    # Create crops for all bubbles
+    crop_paths = []
+    for bubble_idx, box in enumerate(req.boxes):
+        x, y, w, h = box["x"], box["y"], box["w"], box["h"]
+        crop = page.crop((x, y, x + w, y + h))
+        crop_path = f"{CROP_FOLDER}/bubble_{bubble_idx}.png"
+        crop.save(crop_path)
+        crop_paths.append(crop_path)
+
+    return StreamingResponse(
+        stream_translation_multiple(image_path, crop_paths, req.ocr_texts),
+        media_type="text/plain"
+    )
+
 
 @app.post("/word")
 def info(req: InfoRequest):
@@ -161,6 +273,7 @@ def load_folder(req: LoadFolderRequest):
     Load all image files from a folder path
     Returns list of image filenames
     """
+    global TRANSLATIONS_FILE
     folder_path = req.folder_path
 
     # Validate folder exists
@@ -169,6 +282,8 @@ def load_folder(req: LoadFolderRequest):
 
     if not os.path.isdir(folder_path):
         raise HTTPException(status_code=400, detail=f"Path is not a directory: {folder_path}")
+
+    TRANSLATIONS_FILE = os.path.join(folder_path, "translation.json")
 
     # Get all image files in the folder
     image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
@@ -304,13 +419,13 @@ def get_thumbnail(path: str, width: int = 120, height: int = 160):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating thumbnail: {str(e)}")
 
-
 @app.post("/api/translations")
 def save_translation(req: SaveTranslationRequest):
     """
     Save a user translation for a specific bubble
-    Stores in JSON file (in production, use a database)
+    Stores in JSON file
     """
+
     # Load existing translations
     translations = {}
     if os.path.exists(TRANSLATIONS_FILE):
@@ -327,6 +442,7 @@ def save_translation(req: SaveTranslationRequest):
     # Save translation
     translations[req.image_name][str(req.box_index)] = {
         "marker": req.marker,
+        "original": req.original_text,
         "translation": req.translation
     }
 

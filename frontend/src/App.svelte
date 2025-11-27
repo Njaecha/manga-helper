@@ -7,6 +7,7 @@
   import StreamingTranslation from './components/StreamingTranslation.svelte';
   import CollapsibleOutput from './components/CollapsibleOutput.svelte';
   import TranslationInput from './components/TranslationInput.svelte';
+  import ChatPanel from './components/ChatPanel.svelte';
   import PanelSeparator from './components/PanelSeparator.svelte';
   import { error, analysisResult, revealedSections, leftPaneWidthPercent } from './lib/store.js';
 
@@ -73,6 +74,9 @@
 
         <!-- Streaming AI Translation -->
         <StreamingTranslation />
+
+        <!-- AI Chat Panel -->
+        <ChatPanel />
 
       </div>
 

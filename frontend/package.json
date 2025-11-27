@@ -10,6 +10,7 @@
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^6.2.1",
+    "@types/dompurify": "^3.0.5",
     "autoprefixer": "^10.4.22",
     "postcss": "^8.5.6",
     "svelte": "^5.43.5",
@@ -19,7 +20,9 @@
   "dependencies": {
     "@tailwindcss/vite": "^4.1.17",
     "axios": "^1.13.2",
+    "dompurify": "^3.3.0",
     "konva": "^10.0.9",
+    "marked": "^17.0.1",
     "svelte-konva": "^1.0.1"
   }
 }

@@ -90,9 +90,9 @@
 </script>
 
 {#if images.length > 0}
-  <div class="image-carousel">
-    <div class="carousel-header">
-      <div class="header-left">
+  <div class="bg-bg-surface border-t border-border-primary">
+    <div class="flex justify-between items-center px-4 py-2 border-b border-border-primary gap-4">
+      <div class="flex items-center gap-4 flex-1 min-w-0">
         <h3 class="text-sm font-semibold">Pages</h3>
         {#if !expanded}
           <!-- Minimal carousel with page numbers -->
@@ -111,10 +111,10 @@
         {/if}
       </div>
 
-      <div class="header-right">
-        <div class="cache-controls">
+      <div class="flex items-center gap-3">
+        <div class="flex gap-2">
           <button
-            class="cache-btn"
+            class="flex items-center gap-1 px-2 py-1 text-xs font-medium bg-bg-tertiary border border-border-primary rounded cursor-pointer transition-all duration-200 text-text-secondary hover:bg-hover hover:border-[var(--color-accent-blue)] hover:text-[var(--color-accent-blue)]"
             on:click={handleClearCurrentPage}
             title="Clear cache for current page"
           >
@@ -125,7 +125,7 @@
             Page
           </button>
           <button
-            class="cache-btn"
+            class="flex items-center gap-1 px-2 py-1 text-xs font-medium bg-bg-tertiary border border-border-primary rounded cursor-pointer transition-all duration-200 text-text-secondary hover:bg-hover hover:border-[var(--color-accent-blue)] hover:text-[var(--color-accent-blue)]"
             on:click={handleClearAllPages}
             title="Clear cache for all pages"
           >
@@ -137,7 +137,7 @@
           </button>
         </div>
         <button
-          class="collapse-button"
+          class="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-bg-surface border border-border-primary rounded-md cursor-pointer transition-all duration-200 text-text-primary hover:bg-canvas-bg hover:border-[var(--color-accent-blue)]"
           on:click={toggleCarousel}
           title={expanded ? 'Collapse carousel' : 'Expand carousel'}
         >
@@ -161,13 +161,13 @@
             on:click={() => selectImage(index)}
             title="{image} - Page {index + 1}"
           >
-            <div class="thumbnail-number">{index + 1}</div>
+            <div class="absolute top-1 right-1 bg-black/60 text-white text-[10px] px-1 py-0.5 rounded-sm font-semibold">{index + 1}</div>
             <!-- Show actual thumbnail image with fallback to placeholder -->
             {#if !failedThumbnails.has(index)}
               <img
                 src={getThumbnailUrl(currentFolder, image, 120, 160)}
                 alt="Page {index + 1}"
-                class="thumbnail-image"
+                class="w-[60px] h-20 object-cover rounded shadow-sm bg-bg-secondary"
                 loading="lazy"
                 on:error={() => handleThumbnailError(index)}
                 on:load={() => handleThumbnailLoad(index)}
@@ -175,10 +175,10 @@
             {/if}
             {#if failedThumbnails.has(index)}
               <div class="thumbnail-placeholder">
-                <span class="page-label">P{index + 1}</span>
+                <span class="text-base font-bold text-white" style="text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);">P{index + 1}</span>
               </div>
             {/if}
-            <div class="thumbnail-filename">{image}</div>
+            <div class="text-[9px] text-text-tertiary text-center whitespace-nowrap overflow-hidden text-ellipsis max-w-full {index === currentIndex ? 'text-[var(--color-accent-blue-dark)] font-semibold' : ''}">{image}</div>
           </button>
         {/each}
       </div>
@@ -187,60 +187,7 @@
 {/if}
 
 <style>
-  .image-carousel {
-    background: var(--color-bg-surface);
-    border-top: 1px solid var(--color-border-primary);
-  }
-
-  .carousel-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.5rem 1rem;
-    border-bottom: 1px solid var(--color-border-primary);
-    gap: 1rem;
-  }
-
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    flex: 1;
-    min-width: 0;
-  }
-
-  .header-right {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .cache-controls {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .cache-btn {
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-    padding: 0.25rem 0.5rem;
-    font-size: 0.75rem;
-    font-weight: 500;
-    background: var(--color-bg-tertiary);
-    border: 1px solid var(--color-border-primary);
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.2s;
-    color: var(--color-text-secondary);
-  }
-
-  .cache-btn:hover {
-    background: var(--color-hover);
-    border-color: var(--color-accent-blue);
-    color: var(--color-accent-blue);
-  }
-
+  /* Custom scrollbar for carousel (can't be done with Tailwind) */
   .carousel-container {
     display: flex;
     gap: 0.5rem;
@@ -293,27 +240,7 @@
     background: var(--color-accent-blue-light);
   }
 
-  .thumbnail-number {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    background: rgba(0, 0, 0, 0.6);
-    color: white;
-    font-size: 10px;
-    padding: 2px 4px;
-    border-radius: 2px;
-    font-weight: 600;
-  }
-
-  .thumbnail-image {
-    width: 60px;
-    height: 80px;
-    object-fit: cover;
-    border-radius: 4px;
-    box-shadow: var(--shadow-sm);
-    background: var(--color-bg-secondary);
-  }
-
+  /* Gradient placeholder (can't be done with Tailwind) */
   .thumbnail-placeholder {
     width: 60px;
     height: 80px;
@@ -323,27 +250,5 @@
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     border-radius: 4px;
     box-shadow: var(--shadow-sm);
-  }
-
-  .page-label {
-    font-size: 16px;
-    font-weight: bold;
-    color: white;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-  }
-
-  .thumbnail-filename {
-    font-size: 9px;
-    color: var(--color-text-tertiary);
-    text-align: center;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 100%;
-  }
-
-  .thumbnail.active .thumbnail-filename {
-    color: var(--color-accent-blue-dark);
-    font-weight: 600;
   }
 </style>

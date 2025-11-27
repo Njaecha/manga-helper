@@ -1,0 +1,31 @@
+{
+  "name": "manga-helper",
+  "version": "1.0.0",
+  "description": "Manga reading helper application with AI-powered text detection and translation",
+  "type": "module",
+  "scripts": {
+    "dev": "node start.py",
+    "start": "node start.py",
+    "start:windows": "powershell -ExecutionPolicy Bypass -File ./start.ps1",
+    "start:batch": "start.bat",
+    "start:python": "python start.py",
+    "backend": "cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8000",
+    "frontend": "cd frontend && npm run dev",
+    "install:all": "npm run install:backend && npm run install:frontend",
+    "install:backend": "cd backend && pip install -r requirements.txt",
+    "install:frontend": "cd frontend && npm install"
+  },
+  "keywords": [
+    "manga",
+    "translation",
+    "ocr",
+    "ai",
+    "japanese"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  }
+}

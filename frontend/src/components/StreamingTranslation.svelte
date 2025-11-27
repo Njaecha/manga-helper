@@ -116,7 +116,6 @@
     border: 1px solid var(--color-border-primary);
     border-radius: 6px;
     background: var(--color-bg-surface);
-    margin-bottom: 0.5rem;
     display: flex;
     flex-direction: column;
     max-height: 600px;

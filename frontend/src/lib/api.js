@@ -54,6 +54,21 @@ export async function analyzeBubble(imagePath, box) {
 }
 
 /**
+ * Analyze multiple speech bubbles in order (OCR + tokenization)
+ * @param {string} imagePath - Path to the image file
+ * @param {Array<{x: number, y: number, w: number, h: number}>} boxes - Array of bounding boxes in selection order
+ * @returns {Promise<{ocr_tokens: Array, hiragana_tokens: Array, romaji_tokens: Array, bubbleBreakdown: Array}>}
+ */
+export async function analyzeMultipleBubbles(imagePath, boxes) {
+  try {
+    const response = await api.post('/analyze-multiple', { image: imagePath, boxes });
+    return response.data;
+  } catch (error) {
+    handleError(error, 'analyzeMultipleBubbles');
+  }
+}
+
+/**
  * Get info for a given word in context of the image
  * @param {string} imagePath - Path to the image file
  * @param {string} word - Word
@@ -157,6 +172,80 @@ export async function streamTranslation(imagePath, box, ocrText, onChunk, onErro
   }
 }
 
+/**
+ * Stream translation from LLM for multiple bubbles (with thinking enabled)
+ * @param {string} imagePath - Path to the image file
+ * @param {Array<{x: number, y: number, w: number, h: number}>} boxes - Array of bounding boxes in selection order
+ * @param {string[]} ocrTexts - Array of OCR'd Japanese texts to translate
+ * @param {function(string): void} onChunk - Callback for each chunk of streamed text
+ * @param {function(Error): void} onError - Error callback
+ * @returns {Promise<void>}
+ */
+export async function streamTranslationMultiple(imagePath, boxes, ocrTexts, onChunk, onError) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/translate-multiple`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        image: imagePath,
+        boxes: boxes,
+        ocr_texts: ocrTexts
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    // Get the reader from the response body
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = ''; // Buffer for incomplete lines
+
+    // Read the stream
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (done) {
+        break;
+      }
+
+      // Decode chunk and add to buffer
+      buffer += decoder.decode(value, { stream: true });
+
+      // Process complete lines (SSE format: lines ending with \n\n)
+      const lines = buffer.split('\n\n');
+
+      // Keep the last incomplete line in buffer
+      buffer = lines.pop() || '';
+
+      // Process complete lines
+      for (const line of lines) {
+        if (line.trim().startsWith('data: ')) {
+          try {
+            const jsonStr = line.trim().substring(6); // Remove 'data: ' prefix
+            const data = JSON.parse(jsonStr);
+
+            // Pass parsed object {type, text} to callback
+            onChunk(data);
+          } catch (parseError) {
+            console.warn('Failed to parse chunk:', line, parseError);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Stream translation multiple error:', error);
+    if (onError) {
+      onError(error);
+    } else {
+      throw error;
+    }
+  }
+}
+
 // ========== REAL API ENDPOINTS (NEWLY IMPLEMENTED) ==========
 
 /**
@@ -219,15 +308,17 @@ export function getThumbnailUrl(folderPath, filename, width = 120, height = 160)
  * @param {number} boxIndex - Index of the speech bubble
  * @param {string} marker - User-defined marker/number for the bubble
  * @param {string} translation - User's translation text
+ * @param {string} originalText - OCR'd text
  * @returns {Promise<{success: boolean, message: string}>}
  */
-export async function saveTranslation(imageName, boxIndex, marker, translation) {
+export async function saveTranslation(imageName, boxIndex, marker, translation, originalText) {
   try {
     const response = await api.post('/api/translations', {
       image_name: imageName,
       box_index: boxIndex,
       marker: marker || '',
-      translation: translation
+      translation: translation,
+      original_text: originalText
     });
     return response.data;
   } catch (error) {

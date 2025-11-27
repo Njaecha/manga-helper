@@ -5,6 +5,7 @@
     folderPath,
     allBoxes,
     selectedBoxIndex,
+    selectedBoxIndices,
     isDrawingMode,
     addCustomBox,
     selectBox,
@@ -144,6 +145,7 @@
   $: boxes = $allBoxes;
   $: drawMode = $isDrawingMode;
   $: selected = $selectedBoxIndex;
+  $: selectedIndices = $selectedBoxIndices;
   $: images = $imageList;
   $: currentIndex = $currentImageIndex;
 
@@ -230,7 +232,9 @@
 
         if (clickedBoxIndex !== -1) {
           console.log('Found matching box at index:', clickedBoxIndex);
-          handleBoxClick(boxes[clickedBoxIndex], clickedBoxIndex);
+          // Check if Shift key is held for multi-selection
+          const isMultiSelect = e.evt.shiftKey;
+          handleBoxClick(boxes[clickedBoxIndex], clickedBoxIndex, isMultiSelect);
         }
       }
     });
@@ -332,16 +336,16 @@
     }
   }
 
-  function handleBoxClick(box, index) {
-    console.log('Box clicked! Index:', index, 'DrawMode:', drawMode);
+  function handleBoxClick(box, index, isMultiSelect = false) {
+    console.log('Box clicked! Index:', index, 'DrawMode:', drawMode, 'Multi:', isMultiSelect);
     if (drawMode) {
       console.log('In draw mode, ignoring click');
       return; // Don't select in draw mode
     }
 
-    console.log('Calling selectBox with:', box, index);
-    selectBox(box, index);
-    console.log('Box should now be selected');
+    console.log('Calling selectBox with:', box, index, isMultiSelect);
+    selectBox(box, index, isMultiSelect);
+    console.log('Selection updated');
   }
 
   function handleKeyDown(event) {
@@ -495,6 +499,7 @@
             {offset}
             {boxes}
             selectedBoxIndex={selected}
+            {selectedIndices}
             {drawingBox}
             {drawMode}
             {mousePos}

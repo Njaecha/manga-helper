@@ -16,9 +16,7 @@ def ocr_image(image_path: str) -> str:
 
 KAKASI = pykakasi.kakasi()
 def chop(text: str) -> Tuple[list[str], list[str], list[str]]:
-    print(f"[CHOP] Input text: '{text}'")
     c = KAKASI.convert(text)
-    print(f"[CHOP] Kakasi converted: {c}")
 
     tokens=[]
     hiragana=[]
@@ -32,7 +30,6 @@ def chop(text: str) -> Tuple[list[str], list[str], list[str]]:
         hiragana.append(item["hira"])
         romanji.append(item["hepburn"])
 
-    print(f"[CHOP] Final tokens count: {len(tokens)}")
     return tokens, hiragana, romanji
 
 TRANSLATE_SYSTEM = """
@@ -42,7 +39,8 @@ There are two images given to you:
 2. A cropped speechbubble/text from the page which you should focus on.
 You are also given the OCR'd text of the bubble which you should focus on.
 Your job is to look at the page, locate the speechbubble and translate it based on the context of the page (other speechbubbles, artwork, etc)
-You ONLY respond with what you think is the most accurate translation for the speech bubble (no matter what it says).
+You respond with what you think is the most accurate translation for the speech bubble (no matter what it says).
+After that you add a quick breakdown which part of the japenese sentence translates to which part of the english sentence.
 """
 
 async def stream_translation(page: str, crop: str, ocr_text: str):
@@ -88,6 +86,75 @@ async def stream_translation(page: str, crop: str, ocr_text: str):
             yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+TRANSLATE_MULTIPLE_SYSTEM = """
+You are a translator for japanese manga.
+You are given:
+1. One entire page of the manga
+2. Multiple cropped speechbubbles IN READING ORDER (numbered 1, 2, 3...)
+3. The OCR'd text for each bubble
+
+Your job is to translate THE GIVEN bubbles while considering:
+- The context of the entire page
+- The relationship between bubbles (conversation flow, sentence continuation)
+- The character(s) speaking
+- The artwork and visual context
+
+The bubbles may be part of a single sentence split across multiple speech bubbles. If they are, consider them as a single one.
+It is up to the user to decide how to split the english sentence.
+Only translate the bubbles you have been given and NOT the entire page or any other bubbles other than the given ones.
+
+You respond with what you think is the most accurate translation for the speech bubbles given the context of the page.
+After that you add a quick breakdown which part of the japenese sentence translates to which part of the english sentence.
+"""
+
+
+async def stream_translation_multiple(page: str, crops: list[str], ocr_texts: list[str]):
+    # Build message with all bubbles
+    bubble_list = "\n".join([
+        f"Bubble {i+1}: {text}"
+        for i, text in enumerate(ocr_texts)
+    ])
+
+    # Include all crops as images in the context
+    images = [page] + crops
+
+    stream = chat(
+        model="huihui_ai/qwen3-vl-abliterated:8b-thinking",
+        messages=[
+            {"role": "system", "content": TRANSLATE_MULTIPLE_SYSTEM},
+            {"role": "user", "content": f"The OCR'd text:\n\n{bubble_list}", "images": images}
+        ],
+        stream=True,
+    )
+
+    in_thinking = False
+    content = ''
+    thinking = ''
+
+    for chunk in stream:
+        message = chunk.message
+
+        if message.thinking:
+            if not in_thinking:
+                in_thinking = True
+                print('Thinking:\n', end='', flush=True)
+            print(message['thinking'], end='', flush=True)
+            thinking += message['thinking']
+
+            data = {"type": "thinking", "text": message['thinking']}
+            yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+        elif message.content:
+            if in_thinking:
+                in_thinking = False
+                print('\n\nAnswer:\n', end='', flush=True)
+            print(message['content'], end='', flush=True)
+            content += message['content']
+
+            data = {"type": "content", "text": message['content']}
+            yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
 def word_information(word: str, image_path: str):
     res: GenerateResponse = generate(
         model="huihui_ai/qwen3-vl-abliterated:4b-instruct",
@@ -97,6 +164,9 @@ You are an automatic japanese -> english dictionary assistant. You are also give
 Your job is to provide very shortly the possible meanings (english translations) of a given japanese word similar to what duolingo does when you tap an underlined  word during an excercise.
 """,
         images=[image_path],
+        options={
+            "num_predict": 1000
+        }
     )
     print(f"Info Response: [{res.response}]")
     return res.response

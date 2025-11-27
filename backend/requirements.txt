@@ -4,3 +4,4 @@ pillow
 ultralytics
 ollama
 python-multipart
+pykakasi
